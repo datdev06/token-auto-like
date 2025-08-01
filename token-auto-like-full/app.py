@@ -1,58 +1,60 @@
-from flask import Flask, render_template, request, redirect, session
-from config import ADMIN_USERNAME, ADMIN_PASSWORD
-import random, time
+from flask import Flask, request, render_template, redirect, url_for, session
+from config import ADMIN_PASSWORD, load_tokens, load_log_uid, save_tokens, save_log_uid
 
 app = Flask(__name__)
-app.secret_key = "supersecretkey"
+app.secret_key = 'your_secret_key_here'
 
-def get_tokens():
-    with open("tokens.txt") as f:
-        return [line.strip() for line in f if line.strip()]
-
-def save_log(uid):
-    with open("log_uid.txt", "a") as f:
-        f.write(f"{uid} - {time.strftime('%Y-%m-%d %H:%M:%S')}
-")
-
-@app.route("/", methods=["GET", "POST"])
+@app.route('/', methods=['GET'])
 def index():
-    msg = ""
-    if request.method == "POST":
-        uid = request.form.get("uid")
-        tokens = get_tokens()
-        if tokens:
-            token = random.choice(tokens)
-            # Giả lập gọi API like
-            print(f"Đã like UID {uid} bằng token {token}")
-            save_log(uid)
-            msg = f"✅ Đã like UID {uid}"
-        else:
-            msg = "❌ Hết token!"
-    return render_template("index.html", message=msg)
+    return render_template('index.html')
 
-@app.route("/admin", methods=["GET", "POST"])
+@app.route('/like', methods=['GET'])
+def like():
+    uid = request.args.get('uid')
+    if not uid:
+        return "Thiếu UID", 400
+
+    tokens = load_tokens()
+    log_uid = load_log_uid()
+
+    if uid in log_uid:
+        return "UID đã like trước đó", 400
+
+    # Gửi request like
+    success = 0
+    for token in tokens:
+        res = requests.get(f'https://graph.facebook.com/{uid}/likes?access_token={token}')
+        if res.status_code == 200:
+            success += 1
+
+    if success > 0:
+        log_uid.append(uid)
+        save_log_uid(log_uid)
+
+    return f"Đã like UID {uid} bằng {success} token."
+
+@app.route('/admin', methods=['GET', 'POST'])
 def admin():
-    if not session.get("logged_in"):
-        return redirect("/login")
-    with open("tokens.txt") as f:
-        tokens = [line.strip() for line in f]
-    with open("log_uid.txt", "r") as f:
-        logs = f.readlines()
-    return render_template("admin.html", tokens=tokens, logs=logs)
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
 
-@app.route("/login", methods=["GET", "POST"])
+    tokens = load_tokens()
+    logs = load_log_uid()
+    return render_template('admin.html', tokens=tokens, logs=logs)
+
+@app.route('/login', methods=['GET', 'POST'])
 def login():
-    if request.method == "POST":
-        if (request.form["username"] == ADMIN_USERNAME and
-            request.form["password"] == ADMIN_PASSWORD):
-            session["logged_in"] = True
-            return redirect("/admin")
-    return render_template("login.html")
+    if request.method == 'POST':
+        password = request.form.get('password')
+        if password == ADMIN_PASSWORD:
+            session['logged_in'] = True
+            return redirect(url_for('admin'))
+    return render_template('login.html')
 
-@app.route("/logout")
+@app.route('/logout')
 def logout():
-    session.pop("logged_in", None)
-    return redirect("/")
+    session.clear()
+    return redirect(url_for('index'))
 
-if __name__ == "__main__":
-    app.run()
+if __name__ == '__main__':
+    app.run(debug=True)
